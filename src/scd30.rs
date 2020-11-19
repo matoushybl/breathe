@@ -3,7 +3,6 @@ use stm32f4xx_hal::hal::blocking::i2c::Read;
 use stm32f4xx_hal::hal::blocking::i2c::Write;
 
 const SENSOR_ADDR: u8 = 0x61;
-const PRESSURE_OFFSET: u16 = 1031; // Brno, 17.11
 
 pub enum SCD30Command {
     ReadFWVersion,
@@ -23,6 +22,7 @@ impl From<SCD30Command> for u16 {
     }
 }
 
+#[derive(Copy, Clone, Default)]
 pub struct SensorData {
     pub co2: f32,
     pub temperature: f32,

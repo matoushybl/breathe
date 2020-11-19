@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod rendering;
 pub mod scd30;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
