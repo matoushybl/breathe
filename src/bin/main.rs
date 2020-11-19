@@ -18,7 +18,10 @@ use stm32f4xx_hal::prelude::*;
 use stm32f4xx_hal::stm32;
 use stm32f4xx_hal::stm32::I2C1;
 
-const PERIOD: u32 = 84_000_000;
+const SECOND: u32 = 84_000_000;
+
+const DISPLAY_REFRESH: u32 = SECOND;
+const BLINK_PERIOD: u32 = SECOND / 10;
 
 type RTC = Ds1307<I2c<I2C1, (PB8<AlternateOD<AF4>>, PB9<AlternateOD<AF4>>)>>;
 
@@ -50,7 +53,7 @@ const APP: () = {
         led.set_low().unwrap();
 
         let now = cx.start;
-        cx.schedule.blink(now + PERIOD.cycles()).unwrap();
+        cx.schedule.blink(now + BLINK_PERIOD.cycles()).unwrap();
 
         let sda = gpiob.pb9.into_alternate_af4_open_drain();
         let scl = gpiob.pb8.into_alternate_af4_open_drain();
@@ -60,6 +63,8 @@ const APP: () = {
         // // let datetime = NaiveDate::from_ymd(2020, 5, 2).and_hms(19, 59, 58);
         // // defmt::error!("a");
         // // rtc.set_datetime(&datetime).unwrap();
+
+        let spi = hal::spi::Spi::spi1(device.SPI1, (), embedded_hal::spi::MODE_0, 2.mhz().into(), clocks);
 
         let mut sensor = SCD30::init(i2c);
         let v = sensor.read_fw_version().unwrap();
@@ -109,7 +114,13 @@ const APP: () = {
             led.set_low().unwrap();
         }
 
-        cx.schedule.blink(cx.scheduled + PERIOD.cycles()).unwrap();
+        cx.schedule.blink(cx.scheduled + BLINK_PERIOD.cycles()).unwrap();
+    }
+
+    #[task(resources = [], schedule = [refresh_display])]
+    fn refresh_display(cx: refresh_display::Context) {
+
+        cx.schedule.refresh_display(cx.scheduled + DISPLAY_REFRESH.cycles()).unwrap();
     }
 
     extern "C" {
