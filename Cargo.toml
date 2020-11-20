@@ -23,6 +23,7 @@ embedded-graphics = "0.6.2"
 embedded-hal = "0.2.4"
 nb = "1.0.0"
 arrayvec = { version = "0.5.2", default-features = false }
+tinybmp = { version = "0.2.3", features = ["graphics"]}
 
 [features]
 # set logging levels here

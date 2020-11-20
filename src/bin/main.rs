@@ -17,12 +17,9 @@ use stm32f4xx_hal::stm32;
 use stm32f4xx_hal::stm32::I2C1;
 
 use breathe_rs::rendering::Renderer;
-use embedded_graphics::DrawTarget;
 use embedded_hal::blocking::delay::DelayMs;
-use epd_waveshare::color::Color;
 use epd_waveshare::epd4in2::{Display4in2, EPD4in2};
-use epd_waveshare::graphics::{Display, DisplayRotation};
-use epd_waveshare::prelude::{RefreshLUT, WaveshareDisplay};
+use epd_waveshare::prelude::WaveshareDisplay;
 use stm32f4xx_hal::rcc::Clocks;
 use stm32f4xx_hal::spi::{NoMiso, Spi};
 use stm32f4xx_hal::timer::Timer;
@@ -102,12 +99,11 @@ const APP: () = {
         let rcc = device.RCC.constrain().cfgr.sysclk(84.mhz()).hclk(84.mhz());
         let clocks = rcc.freeze();
 
-        let gpioa = device.GPIOA.split();
+        let _gpioa = device.GPIOA.split();
         let gpiob = device.GPIOB.split();
-        let gpioc = device.GPIOC.split();
+        let _gpioc = device.GPIOC.split();
 
         let mut led = gpiob.pb12.into_push_pull_output().downgrade();
-        led.set_high().unwrap();
 
         let sda = gpiob.pb9.into_alternate_af4_open_drain();
         let scl = gpiob.pb8.into_alternate_af4_open_drain();
@@ -128,9 +124,9 @@ const APP: () = {
 
         let mut delay = Delay::new(device.TIM10, clocks);
 
-        let mut epd4in2 =
+        let epd4in2 =
             EPD4in2::new(&mut spi, cs, busy, dc, rst, &mut delay).expect("eink initalize error");
-        let mut display = Display4in2::default();
+        let display = Display4in2::default();
         let mut display = Renderer::new(&mut spi, epd4in2, display);
         display.render_boot(&mut spi);
 

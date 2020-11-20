@@ -2,6 +2,7 @@ use crate::scd30::SensorData;
 use arrayvec::ArrayString;
 use core::fmt::Debug;
 use core::fmt::Write;
+use embedded_graphics::image::Image;
 use embedded_graphics::{
     fonts::{Font24x32, Text},
     prelude::*,
@@ -11,8 +12,7 @@ use embedded_hal::digital::v2::{InputPin, OutputPin};
 use epd_waveshare::color::*;
 use epd_waveshare::epd4in2::{Display4in2, EPD4in2};
 use epd_waveshare::prelude::*;
-use stm32f4xx_hal::gpio::gpiob::PB;
-use stm32f4xx_hal::gpio::{Floating, Input, Output, PushPull};
+use tinybmp::Bmp;
 
 const WIDTH: i32 = 400;
 const HEIGHT: i32 = 300;
@@ -56,7 +56,7 @@ where
     pub fn render_data(&mut self, spi: &mut SPI, sensor_data: &SensorData) {
         let mut buf = ArrayString::<[_; 30]>::new();
         self.display.clear_buffer(Color::White);
-        Self::draw_text(&mut self.display, "Hello", 10, 10);
+        Self::draw_text(&mut self.display, "Breathe...", 10, 10);
 
         buf.clear();
         write!(&mut buf, "CO2:  {:.1} PPM", sensor_data.co2).unwrap();
@@ -69,6 +69,21 @@ where
         buf.clear();
         write!(&mut buf, "Humi: {:.1} %", sensor_data.humidity).unwrap();
         Self::draw_text(&mut self.display, &buf, 10, 140);
+
+        let bmp =
+            Bmp::from_slice(include_bytes!("rust-social.bmp")).expect("Failed to parse BMP image");
+        let image = Image::new(&bmp, Point::new(WIDTH - 50, HEIGHT - 50));
+        image.draw(&mut self.display);
+
+        let bmp = if sensor_data.co2 < 1000.0 {
+            Bmp::from_slice(include_bytes!("happy.bmp")).expect("Failed to parse BMP image")
+        } else if sensor_data.co2 < 1500.0 {
+            Bmp::from_slice(include_bytes!("neutral.bmp")).expect("Failed to parse BMP image")
+        } else {
+            Bmp::from_slice(include_bytes!("sad.bmp")).expect("Failed to parse BMP image")
+        };
+        let image = Image::new(&bmp, Point::new(WIDTH / 2 - 50, HEIGHT - 110));
+        image.draw(&mut self.display).unwrap();
 
         self.driver
             .update_and_display_frame(spi, self.display.buffer())
