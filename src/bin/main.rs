@@ -9,17 +9,23 @@ use stm32f4xx_hal as hal;
 
 use breathe_rs::scd30::{SensorData, SCD30};
 // use ds1307::{Datelike, Ds1307, NaiveDate, Rtcc, Timelike};
-use stm32f4xx_hal::gpio::gpiob::{PB, PB13, PB15, PB8, PB9};
-use stm32f4xx_hal::gpio::{Alternate, AlternateOD, Floating, Input, Output, PushPull, AF4, AF5};
+use stm32f4xx_hal::gpio::gpiob::{PB, PB13, PB15, PB4, PB8, PB9};
+use stm32f4xx_hal::gpio::{
+    Alternate, AlternateOD, Floating, Input, Output, PushPull, AF4, AF5, AF9,
+};
 use stm32f4xx_hal::i2c::I2c;
 use stm32f4xx_hal::prelude::*;
 use stm32f4xx_hal::stm32;
-use stm32f4xx_hal::stm32::I2C1;
+use stm32f4xx_hal::stm32::{I2C1, I2C3};
 
-use breathe_rs::rendering::Renderer;
+use breathe_rs::rendering::{Renderer, State};
+use ds323x::ic::DS3231;
+use ds323x::interface::I2cInterface;
+use ds323x::{Datelike, Ds323x, NaiveDate, NaiveDateTime, Rtcc, Timelike};
 use embedded_hal::blocking::delay::DelayMs;
 use epd_waveshare::epd4in2::{Display4in2, EPD4in2};
 use epd_waveshare::prelude::WaveshareDisplay;
+use stm32f4xx_hal::gpio::gpioa::PA8;
 use stm32f4xx_hal::rcc::Clocks;
 use stm32f4xx_hal::spi::{NoMiso, Spi};
 use stm32f4xx_hal::timer::Timer;
@@ -73,6 +79,7 @@ pub type EPDisplay = Renderer<
 type SPI = Spi<stm32::SPI2, (PB13<Alternate<AF5>>, NoMiso, PB15<Alternate<AF5>>)>;
 
 type CO2Sensor = SCD30<I2c<I2C1, (PB8<AlternateOD<AF4>>, PB9<AlternateOD<AF4>>)>>;
+type RTC = Ds323x<I2cInterface<I2c<I2C3, (PA8<AlternateOD<AF4>>, PB4<AlternateOD<AF9>>)>>, DS3231>;
 
 #[rtic::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
@@ -81,7 +88,8 @@ const APP: () = {
         sensor: CO2Sensor,
         display: EPDisplay,
         spi: SPI,
-        sensor_data: SensorData,
+        rtc: RTC,
+        state: State,
         #[init(0)]
         second_counter: u16,
     }
@@ -99,7 +107,7 @@ const APP: () = {
         let rcc = device.RCC.constrain().cfgr.sysclk(84.mhz()).hclk(84.mhz());
         let clocks = rcc.freeze();
 
-        let _gpioa = device.GPIOA.split();
+        let gpioa = device.GPIOA.split();
         let gpiob = device.GPIOB.split();
         let _gpioc = device.GPIOC.split();
 
@@ -113,6 +121,14 @@ const APP: () = {
         let dc = gpiob.pb2.into_push_pull_output().downgrade();
         let busy = gpiob.pb0.into_floating_input().downgrade();
         let rst = gpiob.pb1.into_push_pull_output().downgrade();
+
+        let sda3 = gpiob.pb4.into_alternate_af9_open_drain();
+        let scl3 = gpioa.pa8.into_alternate_af4_open_drain();
+
+        let i2c3 = I2c::i2c3(device.I2C3, (scl3, sda3), 100.khz(), clocks);
+        let mut rtc = ds323x::Ds323x::new_ds3231(i2c3);
+
+        let initial_datetime = rtc.get_datetime().unwrap();
 
         let mut spi = hal::spi::Spi::spi2(
             device.SPI2,
@@ -159,7 +175,8 @@ const APP: () = {
             sensor,
             display,
             spi,
-            sensor_data: SensorData::default(),
+            rtc,
+            state: State::default(),
         }
     }
 
@@ -184,10 +201,11 @@ const APP: () = {
             .unwrap();
     }
 
-    #[task(resources = [sensor, sensor_data], schedule = [update_sensor])]
+    #[task(resources = [sensor, state, rtc], schedule = [update_sensor])]
     fn update_sensor(cx: update_sensor::Context) {
         let sensor: &mut CO2Sensor = cx.resources.sensor;
-        let sensor_data: &mut SensorData = cx.resources.sensor_data;
+        let state: &mut State = cx.resources.state;
+        let rtc: &mut RTC = cx.resources.rtc;
 
         cx.schedule
             .update_sensor(cx.scheduled + UPDATE_SENSOR.cycles())
@@ -197,29 +215,21 @@ const APP: () = {
         }
 
         if let Ok(data) = sensor.read_measurement() {
-            *sensor_data = data;
-            defmt::info!(
-                "
-        CO2  {:f32} PPM
-        Temp {:f32} C
-        Hum  {:f32} % 
-        ",
-                data.co2,
-                data.temperature,
-                data.humidity
-            );
+            state.update_sensor_data(data);
         }
+
+        state.datetime = rtc.get_datetime().unwrap();
     }
 
-    #[task(resources = [display, spi, sensor_data, second_counter], schedule = [refresh_display])]
+    #[task(resources = [display, spi, state, second_counter], schedule = [refresh_display])]
     fn refresh_display(cx: refresh_display::Context) {
         let display: &mut EPDisplay = cx.resources.display;
         let spi: &mut SPI = cx.resources.spi;
-        let sensor_data: &mut SensorData = cx.resources.sensor_data;
+        let state: &mut State = cx.resources.state;
         let second_counter: &mut u16 = cx.resources.second_counter;
 
         if *second_counter == DISPLAY_REFRESH_COUNT {
-            display.render_data(spi, sensor_data);
+            display.render_data(spi, state);
             *second_counter = 0;
         } else {
             *second_counter += 1;
