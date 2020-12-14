@@ -123,17 +123,17 @@ where
         write!(&mut buf, "Humi: {:.1} %", averaged_values.2).unwrap();
         Self::draw_text(&mut self.display, &buf, 10, 140);
 
-        let bmp =
-            Bmp::from_slice(include_bytes!("rust-social.bmp")).expect("Failed to parse BMP image");
+        let bmp = Bmp::from_slice(include_bytes!("res/rust-social.bmp"))
+            .expect("Failed to parse BMP image");
         let image = Image::new(&bmp, Point::new(WIDTH - 50, HEIGHT - 50));
         image.draw(&mut self.display);
 
         let bmp = if averaged_values.0 < 1000.0 {
-            Bmp::from_slice(include_bytes!("happy.bmp")).expect("Failed to parse BMP image")
+            Bmp::from_slice(include_bytes!("res/happy.bmp")).expect("Failed to parse BMP image")
         } else if averaged_values.0 < 1500.0 {
-            Bmp::from_slice(include_bytes!("neutral.bmp")).expect("Failed to parse BMP image")
+            Bmp::from_slice(include_bytes!("res/neutral.bmp")).expect("Failed to parse BMP image")
         } else {
-            Bmp::from_slice(include_bytes!("sad.bmp")).expect("Failed to parse BMP image")
+            Bmp::from_slice(include_bytes!("res/sad.bmp")).expect("Failed to parse BMP image")
         };
         let image = Image::new(&bmp, Point::new(WIDTH / 2 - 50, HEIGHT - 110));
         image.draw(&mut self.display).unwrap();
@@ -141,9 +141,7 @@ where
         buf.clear();
         write!(
             &mut buf,
-            "{}:{} {}.{}.{}",
-            state.datetime.time().hour(),
-            state.datetime.time().minute(),
+            "{}.{}.{}",
             state.datetime.date().day(),
             state.datetime.date().month(),
             state.datetime.date().year()
@@ -153,6 +151,23 @@ where
         let _ = Text::new(&mut buf, Point::new(10, HEIGHT - 25))
             .into_styled(text_style!(
                 font = Font12x16,
+                text_color = Black,
+                background_color = White
+            ))
+            .draw(&mut self.display);
+
+        buf.clear();
+        write!(
+            &mut buf,
+            "{:2}:{:02}",
+            state.datetime.time().hour(),
+            state.datetime.time().minute(),
+        )
+        .unwrap();
+
+        let _ = Text::new(&mut buf, Point::new(WIDTH - 120, 10))
+            .into_styled(text_style!(
+                font = Font24x32,
                 text_color = Black,
                 background_color = White
             ))

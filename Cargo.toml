@@ -13,17 +13,21 @@ cortex-m = "0.6.4"
 cortex-m-rt = "0.6.13"
 defmt = "0.1.0"
 defmt-rtt = "0.1.0"
+defmt-test = "0.1.0"
 panic-probe = { version = "0.1.0", features = ["print-defmt"] }
-stm32f4xx-hal = { version = "0.8.3" , features = ["rt", "stm32f401"]}
+stm32f4xx-hal = { version = "0.8.3" , features = ["rt", "stm32f401", "usb_fs"]}
 cortex-m-rtic = "0.5.5"
 crc_all = "0.2.0"
 epd-waveshare = "0.4.0"
 embedded-graphics = "0.6.2"
 embedded-hal = "0.2.4"
+usb-device = "0.2.3"
+usbd-serial = "0.1.1"
 nb = "1.0.0"
 arrayvec = { version = "0.5.2", default-features = false }
 tinybmp = { version = "0.2.3", features = ["graphics"]}
 ds323x = "0.3.1"
+byteorder = { version = "1.3.4", default-features = false}
 
 [features]
 # set logging levels here

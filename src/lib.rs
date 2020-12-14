@@ -2,6 +2,7 @@
 
 pub mod rendering;
 pub mod scd30;
+pub mod usb_parser;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 

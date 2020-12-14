@@ -19,6 +19,7 @@ use stm32f4xx_hal::stm32;
 use stm32f4xx_hal::stm32::{I2C1, I2C3};
 
 use breathe_rs::rendering::{Renderer, State};
+use breathe_rs::usb_parser::USBDateBuffer;
 use ds323x::ic::DS3231;
 use ds323x::interface::I2cInterface;
 use ds323x::{Datelike, Ds323x, NaiveDate, NaiveDateTime, Rtcc, Timelike};
@@ -26,9 +27,13 @@ use embedded_hal::blocking::delay::DelayMs;
 use epd_waveshare::epd4in2::{Display4in2, EPD4in2};
 use epd_waveshare::prelude::WaveshareDisplay;
 use stm32f4xx_hal::gpio::gpioa::PA8;
+use stm32f4xx_hal::otg_fs::*;
 use stm32f4xx_hal::rcc::Clocks;
 use stm32f4xx_hal::spi::{NoMiso, Spi};
 use stm32f4xx_hal::timer::Timer;
+use usb_device::class_prelude::UsbBusAllocator;
+use usb_device::prelude::*;
+use usbd_serial::SerialPort;
 
 const SECOND: u32 = 84_000_000;
 
@@ -92,10 +97,16 @@ const APP: () = {
         state: State,
         #[init(0)]
         second_counter: u16,
+        serial: SerialPort<'static, UsbBusType>,
+        usb_dev: UsbDevice<'static, UsbBusType>,
+        date_buffer: USBDateBuffer,
     }
 
     #[init(schedule = [blink, update_sensor, refresh_display])]
     fn init(cx: init::Context) -> init::LateResources {
+        static mut EP_MEMORY: [u32; 1024] = [0; 1024];
+        static mut USB_BUS: Option<UsbBusAllocator<UsbBusType>> = None;
+
         let mut core: rtic::Peripherals = cx.core;
         let device: stm32::Peripherals = cx.device;
 
@@ -161,6 +172,25 @@ const APP: () = {
             .start_continuous_measurement(PRESSURE_OFFSET)
             .unwrap();
 
+        let usb = USB {
+            usb_global: device.OTG_FS_GLOBAL,
+            usb_device: device.OTG_FS_DEVICE,
+            usb_pwrclk: device.OTG_FS_PWRCLK,
+            pin_dm: gpioa.pa11.into_alternate_af10(),
+            pin_dp: gpioa.pa12.into_alternate_af10(),
+        };
+
+        *USB_BUS = Some(UsbBus::new(usb, &mut EP_MEMORY[..]));
+
+        let serial = usbd_serial::SerialPort::new(USB_BUS.as_ref().unwrap());
+
+        let usb_dev = UsbDeviceBuilder::new(USB_BUS.as_ref().unwrap(), UsbVidPid(0x16c0, 0x27dd))
+            .manufacturer("Fake company")
+            .product("Serial port")
+            .serial_number("TEST")
+            .device_class(usbd_serial::USB_CLASS_CDC)
+            .build();
+
         let now = cx.start;
         cx.schedule.blink(now + BLINK_PERIOD.cycles()).unwrap();
         cx.schedule
@@ -177,14 +207,55 @@ const APP: () = {
             spi,
             rtc,
             state: State::default(),
+            serial,
+            usb_dev,
+            date_buffer: USBDateBuffer::new(),
         }
     }
 
-    #[idle(resources = [])]
+    #[idle(resources = [date_buffer, rtc])]
     fn idle(cx: idle::Context) -> ! {
+        let mut date_buffer = cx.resources.date_buffer;
+        let mut rtc = cx.resources.rtc;
         loop {
-            cortex_m::asm::nop();
+            date_buffer.lock(|buf: &mut USBDateBuffer| {
+                if buf.is_date_available() {
+                    let date = buf.get_datetime();
+                    rtc.lock(|rtc: &mut RTC| {
+                        rtc.set_datetime(&date).unwrap();
+                    });
+                    buf.clear();
+                }
+            });
         }
+    }
+
+    #[task(binds = OTG_FS, resources = [serial, usb_dev, date_buffer])]
+    fn usb_handler(cx: usb_handler::Context) {
+        let serial: &mut SerialPort<UsbBusType> = cx.resources.serial;
+        let usb_dev: &mut UsbDevice<UsbBusType> = cx.resources.usb_dev;
+        let date_buffer: &mut USBDateBuffer = cx.resources.date_buffer;
+        if !usb_dev.poll(&mut [serial]) {
+            return;
+        }
+        let mut buf = [0u8; 64];
+
+        match serial.read(&mut buf[..]) {
+            Ok(count) => {
+                date_buffer.recv(&buf[..count]);
+                // for c in buf[..count].iter() {
+                //     serial.write(&[*c]).unwrap();
+                //     defmt::warn!("data {:u8}", c);
+                // }
+                // count bytes were read to &buf[..count]
+            }
+            Err(UsbError::WouldBlock) => {
+                // defmt::debug!("would block.");
+            } // No data received
+            Err(_) => {
+                defmt::warn!("err.");
+            } // An error occurred
+        };
     }
 
     #[task(resources = [led], schedule = [blink])]
