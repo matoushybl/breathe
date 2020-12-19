@@ -26,7 +26,7 @@ use ds323x::{Datelike, Ds323x, NaiveDate, NaiveDateTime, Rtcc, Timelike};
 use embedded_hal::blocking::delay::DelayMs;
 use epd_waveshare::epd4in2::{Display4in2, EPD4in2};
 use epd_waveshare::prelude::WaveshareDisplay;
-use stm32f4xx_hal::gpio::gpioa::PA8;
+use stm32f4xx_hal::gpio::gpioa::{PA, PA8};
 use stm32f4xx_hal::otg_fs::*;
 use stm32f4xx_hal::rcc::Clocks;
 use stm32f4xx_hal::spi::{NoMiso, Spi};
@@ -89,7 +89,7 @@ type RTC = Ds323x<I2cInterface<I2c<I2C3, (PA8<AlternateOD<AF4>>, PB4<AlternateOD
 #[rtic::app(device = stm32f4xx_hal::stm32, peripherals = true, monotonic = rtic::cyccnt::CYCCNT)]
 const APP: () = {
     struct Resources {
-        led: PB<Output<PushPull>>,
+        led: PA<Output<PushPull>>,
         sensor: CO2Sensor,
         display: EPDisplay,
         spi: SPI,
@@ -122,7 +122,7 @@ const APP: () = {
         let gpiob = device.GPIOB.split();
         let _gpioc = device.GPIOC.split();
 
-        let mut led = gpiob.pb12.into_push_pull_output().downgrade();
+        let mut led = gpioa.pa7.into_push_pull_output().downgrade();
 
         let sda = gpiob.pb9.into_alternate_af4_open_drain();
         let scl = gpiob.pb8.into_alternate_af4_open_drain();
@@ -136,10 +136,13 @@ const APP: () = {
         let sda3 = gpiob.pb4.into_alternate_af9_open_drain();
         let scl3 = gpioa.pa8.into_alternate_af4_open_drain();
 
+        defmt::error!("startup");
+
         let i2c3 = I2c::i2c3(device.I2C3, (scl3, sda3), 100.khz(), clocks);
         let mut rtc = ds323x::Ds323x::new_ds3231(i2c3);
 
         let initial_datetime = rtc.get_datetime().unwrap();
+        defmt::error!("startup");
 
         let mut spi = hal::spi::Spi::spi2(
             device.SPI2,
@@ -260,7 +263,7 @@ const APP: () = {
 
     #[task(resources = [led], schedule = [blink])]
     fn blink(cx: blink::Context) {
-        let led: &mut PB<Output<PushPull>> = cx.resources.led;
+        let led: &mut PA<Output<PushPull>> = cx.resources.led;
         if led.is_low().unwrap() {
             led.set_high().unwrap();
         } else {
