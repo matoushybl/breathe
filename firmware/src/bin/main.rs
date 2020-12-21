@@ -43,6 +43,10 @@ const UPDATE_SENSOR: u32 = 2 * SECOND;
 
 const DISPLAY_REFRESH_COUNT: u16 = 20;
 
+const BEEP_PERIOD: u16 = 10 * 60; // 10 minutes
+const BEEP_TIME: u32 = SECOND / 20;
+const BEEP_CO2_LEVEL: f32 = 1500.0;
+
 const PRESSURE_OFFSET: u16 = 1031; // Brno, 17.11
 
 struct Delay {
@@ -96,13 +100,18 @@ const APP: () = {
         rtc: RTC,
         state: State,
         #[init(0)]
-        second_counter: u16,
+        refresh_second_counter: u16,
+        #[init(0)]
+        beeper_second_counter: u16,
+        #[init(false)]
+        levels_exceeded: bool,
+        beeper: PA<Output<PushPull>>,
         serial: SerialPort<'static, UsbBusType>,
         usb_dev: UsbDevice<'static, UsbBusType>,
         date_buffer: USBDateBuffer,
     }
 
-    #[init(schedule = [blink, update_sensor, refresh_display])]
+    #[init(schedule = [blink, update_sensor, refresh_display, beep])]
     fn init(cx: init::Context) -> init::LateResources {
         static mut EP_MEMORY: [u32; 1024] = [0; 1024];
         static mut USB_BUS: Option<UsbBusAllocator<UsbBusType>> = None;
@@ -123,6 +132,7 @@ const APP: () = {
         let _gpioc = device.GPIOC.split();
 
         let mut led = gpioa.pa7.into_push_pull_output().downgrade();
+        let mut beeper = gpioa.pa6.into_push_pull_output().downgrade();
 
         let sda = gpiob.pb9.into_alternate_af4_open_drain();
         let scl = gpiob.pb8.into_alternate_af4_open_drain();
@@ -136,13 +146,10 @@ const APP: () = {
         let sda3 = gpiob.pb4.into_alternate_af9_open_drain();
         let scl3 = gpioa.pa8.into_alternate_af4_open_drain();
 
-        defmt::error!("startup");
-
         let i2c3 = I2c::i2c3(device.I2C3, (scl3, sda3), 100.khz(), clocks);
         let mut rtc = ds323x::Ds323x::new_ds3231(i2c3);
 
         let initial_datetime = rtc.get_datetime().unwrap();
-        defmt::error!("startup");
 
         let mut spi = hal::spi::Spi::spi2(
             device.SPI2,
@@ -153,6 +160,10 @@ const APP: () = {
         );
 
         let mut delay = Delay::new(device.TIM10, clocks);
+
+        beeper.set_high().unwrap();
+        delay.delay_ms(100u8);
+        beeper.set_low().unwrap();
 
         let epd4in2 =
             EPD4in2::new(&mut spi, cs, busy, dc, rst, &mut delay).expect("eink initalize error");
@@ -203,12 +214,17 @@ const APP: () = {
             .refresh_display(now + DISPLAY_REFRESH.cycles())
             .unwrap();
 
+        cx.schedule
+            .beep(now + SECOND.cycles())
+            .unwrap();
+
         init::LateResources {
             led,
             sensor,
             display,
             spi,
             rtc,
+            beeper,
             state: State::default(),
             serial,
             usb_dev,
@@ -275,11 +291,12 @@ const APP: () = {
             .unwrap();
     }
 
-    #[task(resources = [sensor, state, rtc], schedule = [update_sensor])]
+    #[task(resources = [sensor, state, rtc, levels_exceeded], schedule = [update_sensor])]
     fn update_sensor(cx: update_sensor::Context) {
         let sensor: &mut CO2Sensor = cx.resources.sensor;
         let state: &mut State = cx.resources.state;
         let rtc: &mut RTC = cx.resources.rtc;
+        let levels_exceeded: &mut bool = cx.resources.levels_exceeded;
 
         cx.schedule
             .update_sensor(cx.scheduled + UPDATE_SENSOR.cycles())
@@ -289,18 +306,21 @@ const APP: () = {
         }
 
         if let Ok(data) = sensor.read_measurement() {
+            if data.co2 > BEEP_CO2_LEVEL {
+                *levels_exceeded = true;
+            }
             state.update_sensor_data(data);
         }
 
         state.datetime = rtc.get_datetime().unwrap();
     }
 
-    #[task(resources = [display, spi, state, second_counter], schedule = [refresh_display])]
+    #[task(resources = [display, spi, state, refresh_second_counter], schedule = [refresh_display])]
     fn refresh_display(cx: refresh_display::Context) {
         let display: &mut EPDisplay = cx.resources.display;
         let spi: &mut SPI = cx.resources.spi;
         let state: &mut State = cx.resources.state;
-        let second_counter: &mut u16 = cx.resources.second_counter;
+        let second_counter: &mut u16 = cx.resources.refresh_second_counter;
 
         if *second_counter == DISPLAY_REFRESH_COUNT {
             display.render_data(spi, state);
@@ -312,6 +332,38 @@ const APP: () = {
         cx.schedule
             .refresh_display(cx.scheduled + DISPLAY_REFRESH.cycles())
             .unwrap();
+    }
+
+    #[task(resources = [beeper, beeper_second_counter, levels_exceeded], schedule = [beep, beep_off])]
+    fn beep(cx: beep::Context) {
+        let second_counter: &mut u16 = cx.resources.beeper_second_counter;
+        let beeper: &mut PA<Output<PushPull>> = cx.resources.beeper;
+        let levels_exceeded: &mut bool = cx.resources.levels_exceeded;
+
+        if *second_counter > BEEP_PERIOD {
+            *second_counter = 0;
+            if *levels_exceeded {
+                beeper.set_high().unwrap();
+                *levels_exceeded = true;
+            }
+        } else {
+            *second_counter += 1;
+        }
+
+        cx.schedule
+            .beep_off(cx.scheduled + BEEP_TIME.cycles())
+            .unwrap();
+
+        cx.schedule
+            .beep(cx.scheduled + SECOND.cycles())
+            .unwrap();
+    }
+
+    #[task(resources = [beeper])]
+    fn beep_off(cx: beep_off::Context) {
+        let beeper: &mut PA<Output<PushPull>> = cx.resources.beeper;
+
+        beeper.set_low().unwrap();
     }
 
     extern "C" {
